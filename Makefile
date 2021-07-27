@@ -86,7 +86,7 @@ test-local: test-e2e-5
 
 test-remote: push test-e2e-5
 
-test-e2e-5: setup-e2e-test
+test-e2e-5: build setup-e2e-test
 	oc delete namespace "jws-e2e-tests" || true
 	oc new-project "jws-e2e-tests" || true
 	oc create -f xpaas-streams/jws54-tomcat9-image-stream.json -n jws-e2e-tests || true
