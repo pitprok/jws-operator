@@ -13,7 +13,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	// rbac "rbac.authorization.k8s.io/v1"
 	rbac "k8s.io/api/rbac/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -472,7 +471,7 @@ func getPodStatus(pods []corev1.Pod) ([]webserversv1alpha1.PodStatus, bool) {
 			requeue = true
 		}
 	}
-	if requeue{
+	if requeue {
 		log.Info("Some pods don't have an IP address yet, reconciliation requeue scheduled")
 	}
 	return podStatuses, requeue

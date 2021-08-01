@@ -44,7 +44,7 @@ type WebAppSpec struct {
 	// URL for the repository of the application sources
 	SourceRepositoryURL string `json:"sourceRepositoryURL"`
 	// Branch in the source repository
-	SourceRepositoryRef string `json:"sourceRepositoryRef,omitempty"`
+	SourceRepositoryRef string `json:"sourceRepositoryRef"`
 	// Subdirectory in the source repository
 	SourceRepositoryContextDir string `json:"contextDir,omitempty"`
 	// The path on which the application war will be mounted (default:/usr/local/tomcat/webapps/)
@@ -82,7 +82,7 @@ type WebSourcesSpec struct {
 	// Branch in the source repository
 	SourceRepositoryRef string `json:"sourceRepositoryRef"`
 	// Subdirectory in the source repository
-	ContextDir string `json:"contextDir"`
+	ContextDir string `json:"contextDir,omitempty"`
 	// (Optional) Sources related parameters
 	WebSourcesParams *WebSourcesParamsSpec `json:"webSourcesParams,omitempty"`
 }

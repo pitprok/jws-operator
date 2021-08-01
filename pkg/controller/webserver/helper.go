@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	webserversv1alpha1 "github.com/web-servers/jws-operator/pkg/apis/webservers/v1alpha1"
 
@@ -13,8 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
-
-	// rbac "rbac.authorization.k8s.io/v1"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -114,9 +113,7 @@ func generateWebAppBuildScript(webServer *webserversv1alpha1.WebServer) string {
 
 		cd ${DIR};
 
-		if [ ! -z ${webAppSourceRepositoryRef} ]; then
-			git checkout ${webAppSourceRepositoryRef};
-		fi;
+		git checkout ${webAppSourceRepositoryRef};
 
 		if [ ! -z ${webAppSourceRepositoryContextDir} ]; then
 			cd ${webAppSourceRepositoryContextDir};
@@ -195,4 +192,21 @@ func sortPodListByName(podList *corev1.PodList) *corev1.PodList {
 		return podList.Items[i].ObjectMeta.Name < podList.Items[j].ObjectMeta.Name
 	})
 	return podList
+}
+
+func checkBuildPodPhase(buildPod *corev1.Pod) (reconcile.Result, error) {
+	if buildPod.Status.Phase != corev1.PodSucceeded {
+		switch buildPod.Status.Phase {
+		case corev1.PodFailed:
+			log.Info("Application build failed: " + buildPod.Status.Message)
+		case corev1.PodPending:
+			log.Info("Application build pending")
+		case corev1.PodRunning:
+			log.Info("Application is still being built")
+		default:
+			log.Info("Unknown build pod status")
+		}
+		return reconcile.Result{RequeueAfter: (5 * time.Second)}, nil
+	}
+	return reconcile.Result{}, nil
 }

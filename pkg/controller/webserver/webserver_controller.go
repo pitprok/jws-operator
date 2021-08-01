@@ -19,9 +19,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 
-	// rbac "rbac.authorization.k8s.io/v1"
-
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -113,7 +110,8 @@ func (r *ReconcileWebServer) Reconcile(request reconcile.Request) (reconcile.Res
 	updateStatus := false
 	requeue := false
 	updateDeployment := false
-	var result ctrl.Result = reconcile.Result{}
+	isKubernetes := !r.isOpenShift
+	result := reconcile.Result{}
 	var err error = nil
 
 	// Fetch the WebServer
@@ -123,6 +121,17 @@ func (r *ReconcileWebServer) Reconcile(request reconcile.Request) (reconcile.Res
 	}
 
 	webServer = r.setDefaultValues(webServer)
+
+	if webServer.Spec.WebImageStream != nil && webServer.Spec.WebImage != nil {
+		log.Error(err, "Both the WebImageStream and WebImage fields are being used. Only one can be used.")
+		return reconcile.Result{}, err
+	} else if webServer.Spec.WebImageStream == nil && webServer.Spec.WebImage == nil {
+		log.Error(err, "WebImageStream or WebImage required")
+		return reconcile.Result{}, err
+	} else if webServer.Spec.WebImageStream != nil && isKubernetes {
+		log.Error(err, "Image Streams can only be used in an Openshift cluster")
+		return reconcile.Result{}, nil
+	}
 
 	// Check if a Service for routing already exists, and if not create a new one
 	routingService := r.generateRoutingService(webServer)
@@ -134,36 +143,32 @@ func (r *ReconcileWebServer) Reconcile(request reconcile.Request) (reconcile.Res
 	if webServer.Spec.UseSessionClustering {
 
 		if r.useKUBEPing {
+
 			// Check if a RoleBinding for the KUBEPing exists, and if not create one.
 			rolebinding := r.generateRoleBinding(webServer)
 			result, err = r.createResource(webServer, rolebinding, rolebinding.Kind, rolebinding.Name, rolebinding.Namespace)
 			if err != nil || result != (reconcile.Result{}) {
 				return result, err
 			}
+
 		} else {
+
 			// Check if a Service for DNSPing already exists, and if not create a new one
 			dnsService := r.generateServiceForDNS(webServer)
 			result, err = r.createResource(webServer, dnsService, dnsService.Kind, dnsService.Name, dnsService.Namespace)
 			if err != nil || result != (reconcile.Result{}) {
 				return result, err
 			}
+
 		}
 
 		// Check if a ConfigMap for the KUBEPing exists, and if not create one.
-		cmap := r.generateConfigMapForDNS(webServer)
-		result, err = r.createResource(webServer, cmap, cmap.Kind, cmap.Name, cmap.Namespace)
+		configMap := r.generateConfigMapForDNS(webServer)
+		result, err = r.createResource(webServer, configMap, configMap.Kind, configMap.Name, configMap.Namespace)
 		if err != nil || result != (reconcile.Result{}) {
 			return result, err
 		}
 
-	}
-
-	if webServer.Spec.WebImageStream != nil && webServer.Spec.WebImage != nil {
-		log.Error(err, "Both the WebImageStream and WebImage fields are being used. Only one can be used.")
-		return reconcile.Result{}, err
-	} else if webServer.Spec.WebImageStream == nil && webServer.Spec.WebImage == nil {
-		log.Error(err, "WebImageStream or WebImage required")
-		return reconcile.Result{}, err
 	}
 
 	var foundReplicas int32
@@ -181,23 +186,14 @@ func (r *ReconcileWebServer) Reconcile(request reconcile.Request) (reconcile.Res
 
 			// Check if a build Pod for the webapp already exists, and if not create a new one
 			buildPod := r.generateBuildPod(webServer)
-			result, err := r.createResource(webServer, buildPod, buildPod.Kind, buildPod.Name, buildPod.Namespace)
+			result, err = r.createResource(webServer, buildPod, buildPod.Kind, buildPod.Name, buildPod.Namespace)
 			if err != nil || result != (reconcile.Result{}) {
 				return result, err
 			}
 
-			if buildPod.Status.Phase != corev1.PodSucceeded {
-				switch buildPod.Status.Phase {
-				case corev1.PodFailed:
-					log.Info("Application build failed: " + buildPod.Status.Message)
-				case corev1.PodPending:
-					log.Info("Application build pending")
-				case corev1.PodRunning:
-					log.Info("Application is still being built")
-				default:
-					log.Info("Unknown build pod status")
-				}
-				return reconcile.Result{RequeueAfter: (5 * time.Second)}, nil
+			result, err = checkBuildPodPhase(buildPod)
+			if err != nil || result != (reconcile.Result{}) {
+				return result, err
 			}
 
 		}
@@ -220,7 +216,7 @@ func (r *ReconcileWebServer) Reconcile(request reconcile.Request) (reconcile.Res
 		foundReplicas = *deployment.Spec.Replicas
 		replicas := webServer.Spec.Replicas
 		if foundReplicas != replicas {
-			log.Info("Deployment replicas number does not match the WebServer specification")
+			log.Info("Deployment replicas number does not match the WebServer specification. Deployment update scheduled")
 			deployment.Spec.Replicas = &replicas
 			updateDeployment = true
 		}
@@ -235,12 +231,14 @@ func (r *ReconcileWebServer) Reconcile(request reconcile.Request) (reconcile.Res
 			return reconcile.Result{Requeue: true}, nil
 		}
 
-	} else if webServer.Spec.WebImageStream != nil && r.isOpenShift {
+	} else if webServer.Spec.WebImageStream != nil {
+
 		imageStreamName := webServer.Spec.WebImageStream.ImageStreamName
 		imageStreamNamespace := webServer.Spec.WebImageStream.ImageStreamNamespace
 
 		// Check if we need to build the webapp from sources
 		if webServer.Spec.WebImageStream.WebSources != nil {
+
 			// Check if an Image Stream already exists, and if not create a new one
 			imageStream := r.generateImageStream(webServer)
 			result, err = r.createResource(webServer, imageStream, imageStream.Kind, imageStream.Name, imageStream.Namespace)
@@ -248,6 +246,7 @@ func (r *ReconcileWebServer) Reconcile(request reconcile.Request) (reconcile.Res
 				return result, err
 			}
 
+			// Change the Image Stream that the deployment config will use later to deploy the webserver
 			imageStreamName = imageStream.Name
 			imageStreamNamespace = imageStream.Namespace
 
@@ -258,14 +257,17 @@ func (r *ReconcileWebServer) Reconcile(request reconcile.Request) (reconcile.Res
 				return result, err
 			}
 
+			// Check if a Build has been created by the BuildConfig
 			build := &buildv1.Build{}
 			err = r.client.Get(context.TODO(), types.NamespacedName{Name: webServer.Spec.ApplicationName + "-" + strconv.FormatInt(buildConfig.Status.LastVersion, 10), Namespace: webServer.Namespace}, build)
 			if err != nil && !errors.IsNotFound(err) {
 				log.Info("Failed to get the Build")
-				return reconcile.Result{Requeue: true}, nil
+				return reconcile.Result{}, err
 			}
 
+			// If the Build was unsuccessful, stop the operator
 			switch build.Status.Phase {
+
 			case buildv1.BuildPhaseFailed:
 				log.Info("Application build failed: " + build.Status.Message)
 				return reconcile.Result{}, nil
@@ -275,27 +277,32 @@ func (r *ReconcileWebServer) Reconcile(request reconcile.Request) (reconcile.Res
 			case buildv1.BuildPhaseCancelled:
 				log.Info("Application build canceled")
 				return reconcile.Result{}, nil
+
 			}
 		}
 
 		// Check if a DeploymentConfig already exists and if not, create a new one
 		deploymentConfig := r.generateDeploymentConfig(webServer, imageStreamName, imageStreamNamespace)
 		result, err = r.createResource(webServer, deploymentConfig, deploymentConfig.Kind, deploymentConfig.Name, deploymentConfig.Namespace)
-
 		if err != nil || result != (reconcile.Result{}) {
 			return result, err
 		}
 
 		if int(deploymentConfig.Status.LatestVersion) == 0 {
 			log.Info("The DeploymentConfig has not finished deploying the pods yet")
+			return reconcile.Result{RequeueAfter: (500 * time.Millisecond)}, nil
 		}
 
 		// Handle Scaling
 		foundReplicas = deploymentConfig.Spec.Replicas
 		replicas := webServer.Spec.Replicas
 		if foundReplicas != replicas {
-			log.Info("DeploymentConfig replicas number does not match the WebServer specification")
+			log.Info("DeploymentConfig replicas number does not match the WebServer specification. DeploymentConfig update scheduled")
 			deploymentConfig.Spec.Replicas = replicas
+			updateDeployment = true
+		}
+
+		if updateDeployment {
 			err = r.client.Update(context.TODO(), deploymentConfig)
 			if err != nil {
 				log.Info("Failed to update DeploymentConfig.", "DeploymentConfig.Namespace", deploymentConfig.Namespace, "DeploymentConfig.Name", deploymentConfig.Name)
@@ -304,26 +311,6 @@ func (r *ReconcileWebServer) Reconcile(request reconcile.Request) (reconcile.Res
 			// Spec updated - return and requeue
 			return reconcile.Result{Requeue: true}, nil
 		}
-	} else {
-		log.Error(err, "Image Streams can only be used in an Openshift cluster")
-		return reconcile.Result{}, nil
-	}
-
-	// List of pods which belongs under this webServer instance
-	podList, err := getPodList(r, webServer)
-	if err != nil {
-		log.Error(err, "Failed to get pod list.", "WebServer.Namespace", webServer.Namespace, "WebServer.Name", webServer.Name)
-		return reconcile.Result{}, err
-	}
-
-	// Get the status of the active pods
-	podsStatus, requeue  := getPodStatus(podList.Items)
-	if !reflect.DeepEqual(podsStatus, webServer.Status.Pods) {
-		// log.Info("Will update the WebServer pod status", "New pod status list", podsStatus)
-		// log.Info("Will update the WebServer pod status", "Existing pod status list", webServer.Status.Pods)
-		log.Info("Status.Pods update scheduled")
-		webServer.Status.Pods = podsStatus
-		updateStatus = true
 	}
 
 	if r.isOpenShift {
@@ -339,12 +326,20 @@ func (r *ReconcileWebServer) Reconcile(request reconcile.Request) (reconcile.Res
 		for i, ingress := range route.Status.Ingress {
 			hosts[i] = ingress.Host
 		}
+
 		sort.Strings(hosts)
 		if !reflect.DeepEqual(hosts, webServer.Status.Hosts) {
 			updateStatus = true
 			webServer.Status.Hosts = hosts
 			log.Info("Status.Hosts update scheduled")
 		}
+	}
+
+	// List of pods which belongs under this webServer instance
+	podList, err := getPodList(r, webServer)
+	if err != nil {
+		log.Error(err, "Failed to get pod list.", "WebServer.Namespace", webServer.Namespace, "WebServer.Name", webServer.Name)
+		return reconcile.Result{}, err
 	}
 
 	// Make sure the number of active pods is the desired replica size.
@@ -354,12 +349,21 @@ func (r *ReconcileWebServer) Reconcile(request reconcile.Request) (reconcile.Res
 		requeue = true
 	}
 
+	// Get the status of the active pods
+	podsStatus, requeue := getPodStatus(podList.Items)
+	if !reflect.DeepEqual(podsStatus, webServer.Status.Pods) {
+		log.Info("Status.Pods update scheduled")
+		webServer.Status.Pods = podsStatus
+		updateStatus = true
+	}
+
 	// Update the replicas
 	if webServer.Status.Replicas != foundReplicas {
 		log.Info("Status.Replicas update scheduled")
 		webServer.Status.Replicas = foundReplicas
 		updateStatus = true
 	}
+
 	// Update the scaledown
 	numberOfPodsToScaleDown := foundReplicas - webServer.Spec.Replicas
 	if webServer.Status.ScalingdownPods != numberOfPodsToScaleDown {
@@ -367,17 +371,19 @@ func (r *ReconcileWebServer) Reconcile(request reconcile.Request) (reconcile.Res
 		webServer.Status.ScalingdownPods = numberOfPodsToScaleDown
 		updateStatus = true
 	}
-	// Update if needed.
+
 	if updateStatus {
 		err := updateWebServerStatus(webServer, r.client)
 		if err != nil {
 			return reconcile.Result{}, err
 		}
 	}
+
 	if requeue {
 		log.Info("Requeuing reconciliation")
 		return reconcile.Result{RequeueAfter: (500 * time.Millisecond)}, nil
 	}
+
 	log.Info("Reconciliation complete")
 	return reconcile.Result{}, nil
 }

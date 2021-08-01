@@ -11,8 +11,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	// rbac "rbac.authorization.k8s.io/v1"
-
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
@@ -101,7 +99,7 @@ func generateEnvBuild(webServer *webserversv1alpha1.WebServer) []corev1.EnvVar {
 
 // Create the BuildTriggerPolicy
 func generateBuildTriggerPolicy(webServer *webserversv1alpha1.WebServer) []buildv1.BuildTriggerPolicy {
-	env := []buildv1.BuildTriggerPolicy{
+	buildTriggerPolicies := []buildv1.BuildTriggerPolicy{
 		{
 			Type:        "ImageChange",
 			ImageChange: &buildv1.ImageChangeTrigger{},
@@ -115,7 +113,7 @@ func generateBuildTriggerPolicy(webServer *webserversv1alpha1.WebServer) []build
 		params := sources.WebSourcesParams
 		if params != nil {
 			if params.GithubWebhookSecret != "" {
-				env = append(env, buildv1.BuildTriggerPolicy{
+				buildTriggerPolicies = append(buildTriggerPolicies, buildv1.BuildTriggerPolicy{
 					Type: "GitHub",
 					GitHubWebHook: &buildv1.WebHookTrigger{
 						Secret: params.GithubWebhookSecret,
@@ -123,7 +121,7 @@ func generateBuildTriggerPolicy(webServer *webserversv1alpha1.WebServer) []build
 				})
 			}
 			if params.GenericWebhookSecret != "" {
-				env = append(env, buildv1.BuildTriggerPolicy{
+				buildTriggerPolicies = append(buildTriggerPolicies, buildv1.BuildTriggerPolicy{
 					Type: "Generic",
 					GenericWebHook: &buildv1.WebHookTrigger{
 						Secret: params.GenericWebhookSecret,
@@ -132,7 +130,7 @@ func generateBuildTriggerPolicy(webServer *webserversv1alpha1.WebServer) []build
 			}
 		}
 	}
-	return env
+	return buildTriggerPolicies
 }
 
 func (r *ReconcileWebServer) generateDeploymentConfig(webServer *webserversv1alpha1.WebServer, imageStreamName string, imageStreamNamespace string) *appsv1.DeploymentConfig {
